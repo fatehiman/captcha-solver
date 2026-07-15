@@ -1,0 +1,7 @@
+# Core dependencies for the math-CAPTCHA OCR project.
+# PyTorch: install the build matching your CUDA/CPU from https://pytorch.org
+# (a CUDA GPU is used automatically if available, otherwise CPU).
+torch>=2.0
+opencv-python>=4.8
+numpy>=1.24
+Pillow>=9.0

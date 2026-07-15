@@ -1,0 +1,14 @@
+# Server (CPU, headless) dependencies for the OCR API.
+#
+# Install CPU-only PyTorch (NO CUDA — the VPS has no GPU) from the CPU index:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# then:
+#   pip install -r requirements-server.txt
+#
+# Note: opencv-python-headless (NOT opencv-python) — the server is headless and
+# has no libGL; the headless build imports cleanly.
+torch                       # install the CPU wheel first (see above)
+opencv-python-headless>=4.8
+numpy>=1.24,<2.3            # newer numpy (2.5.x) broke torch/cv2 import on the VPS
+flask>=3.0
+gunicorn>=21.0

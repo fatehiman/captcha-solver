@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Deployment / server-specific docs (contain infrastructure details)
+DEPLOY.md
+ocr-api-manual.md
+
+# Local artifacts
+*.tar.gz
+model_val.pt
