@@ -38,6 +38,8 @@ auto-waybill-solve/
 │   ├── model.py         # compact CRNN
 │   └── decode.py        # CTC greedy decode + expression validation/solve
 ├── train.py             # train the model -> model.pt
+├── images_type2/        # type 2: 5-digit CAPTCHA samples (labels_type2.csv)
+├── train_type2.py       # type 2: train -> model_type2.pt (waybill_ocr/type2.py)
 ├── ocr.py               # run OCR on an image or a folder
 ├── evaluate.py          # accuracy vs labels.csv
 └── requirements.txt
@@ -93,6 +95,29 @@ python evaluate.py --errors   # list every mismatch
   More labeled samples directly improve generalization.
 - **Different character set / operators** (e.g. `*`, `/`): extend `CHARSET`
   in `waybill_ocr/config.py` and retrain.
+
+## CAPTCHA types (`?type=` in the API)
+
+Each CAPTCHA kind has its own model, so adding a kind never changes an older one.
+
+| type | CAPTCHA | Model | Data | Train |
+|---|---|---|---|---|
+| 1 (default, no `type`) | math `48-10`, 150×50 | `model.pt` | `images/`, `labels.csv` | `train.py` |
+| 2 | 5 digits `64257`, 100×25 grey pixel font | `model_type2.pt` | `images_type2/`, `labels_type2.csv` | `train_type2.py` |
+
+**Type 2** had only 19 real samples, so `waybill_ocr/type2.py` makes the training data: it cuts
+every digit out of the real samples (the site's own font) and builds thousands of new CAPTCHAs
+from those shapes (random digits, spacing and offsets, a background like the real one, noise
+lines, JPEG). Same CRNN as type 1, own weights.
+
+```bash
+python train_type2.py --folds 4    # honest accuracy: each image tested by a model that never saw it
+python train_type2.py              # train on all samples -> model_type2.pt
+```
+
+Measured: 4-fold cross-validation **19/19** codes (95/95 digits). New samples: add them to
+`images_type2/` + `labels_type2.csv` and train again. A new CAPTCHA kind = a new type: its own
+model file, an entry in `MODEL_PATHS` in `api.py`, and its own check of the text.
 
 ## Notes on labels
 
