@@ -88,9 +88,11 @@ def main():
     print(f"device={device}  samples={len(samples)}")
 
     if args.folds:
+        # Split by code, so the original and the screenshot of one CAPTCHA are in the same fold.
+        codes = sorted({t for _, t in samples})
+        random.Random(args.seed).shuffle(codes)
         order = samples[:]
-        random.Random(args.seed).shuffle(order)
-        folds = [order[k::args.folds] for k in range(args.folds)]
+        folds = [[s for s in order if s[1] in set(codes[k::args.folds])] for k in range(args.folds)]
         right = digits_right = 0
         for k, test in enumerate(folds):
             train_s = [s for s in order if s not in test]

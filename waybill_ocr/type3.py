@@ -30,7 +30,7 @@ from .config import encode
 SRC_W, SRC_H = 300, 100
 # Text area of the 300x100 image (ink is at x 52..249, y 23..84 in the samples).
 CROP_X0, CROP_X1, CROP_Y0, CROP_Y1 = 40, 262, 12, 92
-IMG_H3, IMG_W3 = 48, 136          # network input (H must be a multiple of 16)
+IMG_H3, IMG_W3 = 48, 192          # network input (H must be a multiple of 16; W/4 = CTC steps)
 N_DIGITS = 6
 PITCH = 31.0                       # distance between digit centres in the real images
 FIRST_CENTRE = 68.0
@@ -48,10 +48,48 @@ def load_labels(labels_csv):
         return [(r["filename"], r["text"].strip()) for r in csv.DictReader(f)]
 
 
+def _trim_border(gray):
+    """Drop dark frame lines at the edges (an element screenshot can show the box border)."""
+    for _ in range(3):
+        h, w = gray.shape
+        if h < 10 or w < 10:
+            break
+        dark = lambda v: (v < 160).mean() > 0.5
+        t, b = dark(gray[0]), dark(gray[-1])
+        l, r = dark(gray[:, 0]), dark(gray[:, -1])
+        if not (t or b or l or r):
+            break
+        gray = gray[int(t):h - int(b), int(l):w - int(r)]
+    return gray
+
+
+def normalize(gray):
+    """Any form of the picture -> the original 300x100 frame.
+
+    The site shows the 300x100 image in a smaller, wider box with CSS ``object-fit: cover``
+    (e.g. 326x58): scaled to the box width, top and bottom cut off. A screenshot of the element
+    (capture() in Macromania) is that. Scale to width 300 (keeps the shapes) and centre it on a
+    100-px-high background, so the digits are where they are in the original. Works for the
+    original image (no change), screenshots at any zoom / devicePixelRatio, PNG or JPEG.
+    """
+    if gray.shape == (SRC_H, SRC_W):
+        return gray
+    gray = _trim_border(gray)
+    h, w = gray.shape
+    nh = max(1, int(round(h * SRC_W / w)))
+    g = cv2.resize(gray, (SRC_W, nh), interpolation=cv2.INTER_AREA if w > SRC_W else cv2.INTER_LINEAR)
+    if nh >= SRC_H:
+        y = (nh - SRC_H) // 2
+        return g[y:y + SRC_H]
+    out = np.full((SRC_H, SRC_W), BG, np.uint8)
+    y = (SRC_H - nh) // 2
+    out[y:y + nh] = g
+    return out
+
+
 def to_input(gray):
     """Gray uint8 image of any size -> float tensor (1, IMG_H3, IMG_W3) in [-1, 1]."""
-    if gray.shape != (SRC_H, SRC_W):
-        gray = cv2.resize(gray, (SRC_W, SRC_H), interpolation=cv2.INTER_AREA)
+    gray = normalize(gray)
     crop = gray[CROP_Y0:CROP_Y1, CROP_X0:CROP_X1]
     resized = cv2.resize(crop, (IMG_W3, IMG_H3), interpolation=cv2.INTER_AREA)
     x = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
@@ -109,6 +147,8 @@ def extract_glyphs(images_dir, samples):
     raw = {str(d): [] for d in range(10)}
     for fn, text in samples:
         g = cv2.imdecode(np.fromfile(os.path.join(images_dir, fn), np.uint8), cv2.IMREAD_GRAYSCALE)
+        if g.shape != (SRC_H, SRC_W):
+            continue                           # screenshots: used as real samples, not for shapes
         ink = _ink(g)
         cuts = _cuts(ink, len(text))
         if cuts is None:
@@ -148,14 +188,27 @@ def synth(bank, rng, text=None):
         text = "".join(rng.choice("0123456789") for _ in range(N_DIGITS))
     img = np.full((SRC_H, SRC_W), BG, np.float32)
     dx0 = rng.uniform(-8, 8)
-    for k, ch in enumerate(text):
+    shapes = []
+    for ch in text:
         alpha, y_top = rng.choice(bank[ch])
         s = rng.uniform(0.9, 1.12)
         a = cv2.resize(alpha, (max(4, int(round(alpha.shape[1] * s * rng.uniform(0.92, 1.08)))),
                                max(4, int(round(alpha.shape[0] * s)))), interpolation=cv2.INTER_LINEAR)
+        shapes.append((a, y_top, alpha.shape[0]))
+    # Centres: a fixed pitch, or (like on the site) by the digit widths, so narrow digits
+    # such as "11" can stand close together.
+    if rng.random() < 0.5:
+        centres = [FIRST_CENTRE + dx0 + k * PITCH + rng.uniform(-4, 4) for k in range(len(text))]
+    else:
+        centres, x = [], 0.0
+        for a, _, _ in shapes:
+            centres.append(x + a.shape[1] / 2)
+            x += a.shape[1] + rng.uniform(-2, 12)
+        shift = SRC_W / 2 + rng.uniform(-15, 15) - x / 2
+        centres = [c + shift for c in centres]
+    for (a, y_top, h0), cx in zip(shapes, centres):
         a = _rotate(a, rng.uniform(-10, 10))
-        cx = FIRST_CENTRE + dx0 + k * PITCH + rng.uniform(-4, 4)
-        cy = y_top + alpha.shape[0] / 2 + rng.uniform(-5, 5)
+        cy = y_top + h0 / 2 + rng.uniform(-5, 5)
         h, w = a.shape
         x0, y0 = int(round(cx - w / 2)), int(round(cy - h / 2))
         xa, ya = max(0, x0), max(0, y0)
@@ -167,6 +220,23 @@ def synth(bank, rng, text=None):
     n = int(SRC_W * SRC_H * rng.uniform(0.012, 0.022))
     img[np.random.randint(0, SRC_H, n), np.random.randint(0, SRC_W, n)] = 0
     return np.clip(img, 0, 255).astype(np.uint8), text
+
+
+def as_screenshot(gray, rng):
+    """Make a 300x100 picture look like a screenshot of the site's element: scaled up a bit,
+    top and bottom cut (object-fit: cover), sometimes a 1-px border, sometimes JPEG."""
+    s = rng.uniform(1.0, 1.25) * rng.choice([1, 1, 1, 2])          # zoom / devicePixelRatio
+    w = int(round(SRC_W * s))
+    g = cv2.resize(gray, (w, int(round(SRC_H * s))), interpolation=cv2.INTER_LINEAR)
+    vh = int(round(w * rng.uniform(0.16, 0.24)))                   # box height (326x58 -> 0.178)
+    y = (g.shape[0] - vh) // 2 + rng.randint(-2, 2)
+    g = g[max(0, y):max(0, y) + vh].copy()
+    if rng.random() < 0.5:
+        g = cv2.copyMakeBorder(g, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=int(rng.uniform(120, 200)))
+    if rng.random() < 0.3:
+        _, buf = cv2.imencode(".jpg", g, [cv2.IMWRITE_JPEG_QUALITY, rng.randint(60, 95)])
+        g = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+    return g
 
 
 def light_augment(gray, rng):
@@ -183,8 +253,9 @@ def light_augment(gray, rng):
 class Type3Dataset(Dataset):
     """Synthetic CAPTCHAs plus the real labelled ones (lightly augmented)."""
 
-    def __init__(self, bank, real=(), size=20000, real_repeat=0, seed=0):
+    def __init__(self, bank, real=(), size=20000, real_repeat=0, seed=0, shot_p=0.35):
         self.bank = bank
+        self.shot_p = shot_p                   # part of the 300x100 pictures turned into "screenshots"
         self.real = list(real)                 # [(gray, text)]
         self.size = size
         self.real_repeat = real_repeat
@@ -196,8 +267,11 @@ class Type3Dataset(Dataset):
     def __getitem__(self, i):
         if i >= self.size and self.real:
             gray, text = self.real[(i - self.size) % len(self.real)]
-            gray = light_augment(gray, self.rng)
+            if gray.shape == (SRC_H, SRC_W):
+                gray = light_augment(gray, self.rng)
         else:
             gray, text = synth(self.bank, self.rng)
+        if gray.shape == (SRC_H, SRC_W) and self.rng.random() < self.shot_p:
+            gray = as_screenshot(gray, self.rng)
         target = torch.tensor(encode(text), dtype=torch.long)
         return to_input(gray), target, len(target), text

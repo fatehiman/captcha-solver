@@ -119,19 +119,32 @@ python train_type2.py              # train on all samples -> model_type2.pt
 ```
 
 Measured: 4-fold cross-validation **19/19** codes (95/95 digits). New samples: add them to
-`images_type2/` + `labels_type2.csv` and train again. **Type 3** (20 real samples, file name = the code) works the same way with `waybill_ocr/type3.py`: the
-digits are cut out of the samples (6 cuts chosen together at the columns with the least ink, odd shapes
-dropped), and new CAPTCHAs are built from them (random digits, small rotation/scale/position per digit,
-the same black speckle). The model is the same CRNN class with a bigger input (48×136, made from a crop of the
-text area), saved in `model_type3.pt`; `api.py` builds it with `CRNN(img_h=48)`. Types 1 and 2 are not changed.
+`images_type2/` + `labels_type2.csv` and train again.
+
+**Type 3** (site: `my.asiatech.ir/login`, `#captcha-image`) — 74 real CAPTCHAs in `images_type3/`,
+file name = the code: `<code>.png` is the original 300×100 image, `shot-<code>.png` the screenshot of the
+element as the browser shows it. `waybill_ocr/type3.py`:
+
+- **Any input form.** The site shows the 300×100 image in a 326×58 box with CSS `object-fit: cover`
+  (scaled ×1.087, top and bottom cut off). A screenshot (Macromania `capture()`) is that. `normalize()` trims
+  a dark border line, scales to width 300 and centres it on a 100-px-high background, so the digits are where
+  they are in the original. Original image, screenshots at any zoom / devicePixelRatio, PNG or JPEG all work.
+- **Training data.** The digits are cut out of the original samples (6 cuts chosen together at the columns
+  with the least ink, odd shapes dropped) and new CAPTCHAs are built from them: random digits, small
+  rotation/scale/position per digit, fixed pitch or packed by width (so narrow digits like `۱۱` stand close),
+  the same black speckle. 35 % of the 300×100 pictures are turned into "screenshots" (`as_screenshot`).
+  The real samples (both forms) are added too.
+- **Model.** The same CRNN class with a bigger input (48×192 from a crop of the text area), saved in
+  `model_type3.pt`; `api.py` builds it with `CRNN(img_h=48)`. Types 1 and 2 are not changed.
 
 ```bash
-python train_type3.py --folds 4 --epochs 20 --synth 6000   # honest accuracy
-python train_type3.py --epochs 30 --synth 12000            # train on all samples -> model_type3.pt
+python train_type3.py --folds 4 --epochs 20 --synth 6000 --real-repeat 20   # honest accuracy
+python train_type3.py --epochs 30 --synth 12000 --real-repeat 20            # all samples -> model_type3.pt
 ```
 
-Measured: 4-fold cross-validation **19/20** codes (119/120 digits). More samples (add to `images_type3/` +
-`labels_type3.csv`, then train again) make it better; at least 5 samples of each digit is best (digit 4 has few).
+Measured (folds split by code, so a screenshot and its original are always in the same fold):
+4-fold cross-validation **128/128** (74 codes, originals + screenshots). Before the screenshot fix the old
+model read **0/54** screenshots. New samples: add them to `images_type3/` + `labels_type3.csv`, train again.
 
 A new CAPTCHA kind = a new type: its own
 model file, an entry in `MODEL_PATHS` in `api.py`, and its own check of the text.
