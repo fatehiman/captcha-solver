@@ -15,10 +15,12 @@ POST /ocr
     Query/form params:
       - solve=1   include the computed arithmetic result
       - type=N    which CAPTCHA kind (OCR algorithm). Empty or 1 = the original
-                  math CAPTCHA (unchanged); 2 = 5-digit CAPTCHA (100x25).
+                  math CAPTCHA (unchanged); 2 = 5-digit CAPTCHA (100x25);
+                  3 = 6-digit CAPTCHA with Persian digits (300x100 PNG).
     -> {"expression": "48-10", "answer": 38, "valid": true}
        type=2: {"expression": "64257", "valid": true, "type": 2}
                (with solve=1, "answer" is the code itself, or null)
+       type=3: {"expression": "062979", "valid": true, "type": 3}  (same rules, 6 digits)
 
 Run (dev):        python api.py
 Run (prod):       gunicorn -w 2 -b 127.0.0.1:25470 api:app
@@ -31,10 +33,12 @@ import numpy as np
 import torch
 from flask import Flask, request, jsonify
 
+from waybill_ocr.config import IMG_H
 from waybill_ocr.dataset import to_input
 from waybill_ocr.model import CRNN
 from waybill_ocr.decode import greedy_decode, evaluate_expression, is_valid_expression
 from waybill_ocr.type2 import is_valid_text
+from waybill_ocr import type3
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.environ.get("OCR_MODEL", os.path.join(ROOT, "model.pt"))
@@ -42,6 +46,7 @@ MODEL_PATH = os.environ.get("OCR_MODEL", os.path.join(ROOT, "model.pt"))
 MODEL_PATHS = {
     "1": MODEL_PATH,
     "2": os.environ.get("OCR_MODEL_TYPE2", os.path.join(ROOT, "model_type2.pt")),
+    "3": os.environ.get("OCR_MODEL_TYPE3", os.path.join(ROOT, "model_type3.pt")),
 }
 MAX_BYTES = int(os.environ.get("OCR_MAX_BYTES", 2 * 1024 * 1024))  # 2 MB
 API_KEY = os.environ.get("OCR_API_KEY")  # optional; if set, require header X-API-Key
@@ -65,7 +70,7 @@ def get_model(kind="1"):
         with _lock:
             if kind not in _models:
                 ckpt = torch.load(MODEL_PATHS[kind], map_location=DEVICE, weights_only=False)
-                m = CRNN().to(DEVICE)
+                m = CRNN(img_h=type3.IMG_H3 if kind == "3" else IMG_H).to(DEVICE)
                 m.load_state_dict(ckpt["state_dict"])
                 m.eval()
                 _models[kind] = m
@@ -93,7 +98,7 @@ def ocr():
 
     kind = str(request.values.get("type", "")).strip() or "1"
     if kind not in MODEL_PATHS:
-        return jsonify(error=f"unknown type {kind!r} (use 1 or 2; empty = 1)"), 400
+        return jsonify(error=f"unknown type {kind!r} (use 1, 2 or 3; empty = 1)"), 400
 
     raw = _read_image_bytes()
     if not raw:
@@ -104,14 +109,14 @@ def ocr():
     if gray is None:
         return jsonify(error="could not decode image"), 400
 
-    x = to_input(gray).unsqueeze(0).to(DEVICE)
+    x = (type3.to_input(gray) if kind == "3" else to_input(gray)).unsqueeze(0).to(DEVICE)
     with torch.no_grad():
         text = greedy_decode(get_model(kind)(x))[0]
 
     solve = str(request.values.get("solve", "")).lower() in ("1", "true", "yes")
-    if kind == "2":
-        valid = is_valid_text(text)
-        resp = {"expression": text, "valid": valid, "type": 2}
+    if kind in ("2", "3"):
+        valid = is_valid_text(text) if kind == "2" else type3.is_valid_text(text)
+        resp = {"expression": text, "valid": valid, "type": int(kind)}
         if solve:
             resp["answer"] = text if valid else None
         return jsonify(resp)

@@ -40,6 +40,8 @@ auto-waybill-solve/
 ├── train.py             # train the model -> model.pt
 ├── images_type2/        # type 2: 5-digit CAPTCHA samples (labels_type2.csv)
 ├── train_type2.py       # type 2: train -> model_type2.pt (waybill_ocr/type2.py)
+├── images_type3/        # type 3: 6-digit Persian CAPTCHA samples (labels_type3.csv)
+├── train_type3.py       # type 3: train -> model_type3.pt (waybill_ocr/type3.py)
 ├── ocr.py               # run OCR on an image or a folder
 ├── evaluate.py          # accuracy vs labels.csv
 └── requirements.txt
@@ -104,6 +106,7 @@ Each CAPTCHA kind has its own model, so adding a kind never changes an older one
 |---|---|---|---|---|
 | 1 (default, no `type`) | math `48-10`, 150×50 | `model.pt` | `images/`, `labels.csv` | `train.py` |
 | 2 | 5 digits `64257`, 100×25 grey pixel font | `model_type2.pt` | `images_type2/`, `labels_type2.csv` | `train_type2.py` |
+| 3 | 6 digits `062979` (Persian digit shapes, ASCII answer), 300×100 PNG | `model_type3.pt` | `images_type3/`, `labels_type3.csv` | `train_type3.py` |
 
 **Type 2** had only 19 real samples, so `waybill_ocr/type2.py` makes the training data: it cuts
 every digit out of the real samples (the site's own font) and builds thousands of new CAPTCHAs
@@ -116,7 +119,21 @@ python train_type2.py              # train on all samples -> model_type2.pt
 ```
 
 Measured: 4-fold cross-validation **19/19** codes (95/95 digits). New samples: add them to
-`images_type2/` + `labels_type2.csv` and train again. A new CAPTCHA kind = a new type: its own
+`images_type2/` + `labels_type2.csv` and train again. **Type 3** (20 real samples, file name = the code) works the same way with `waybill_ocr/type3.py`: the
+digits are cut out of the samples (6 cuts chosen together at the columns with the least ink, odd shapes
+dropped), and new CAPTCHAs are built from them (random digits, small rotation/scale/position per digit,
+the same black speckle). The model is the same CRNN class with a bigger input (48×136, made from a crop of the
+text area), saved in `model_type3.pt`; `api.py` builds it with `CRNN(img_h=48)`. Types 1 and 2 are not changed.
+
+```bash
+python train_type3.py --folds 4 --epochs 20 --synth 6000   # honest accuracy
+python train_type3.py --epochs 30 --synth 12000            # train on all samples -> model_type3.pt
+```
+
+Measured: 4-fold cross-validation **19/20** codes (119/120 digits). More samples (add to `images_type3/` +
+`labels_type3.csv`, then train again) make it better; at least 5 samples of each digit is best (digit 4 has few).
+
+A new CAPTCHA kind = a new type: its own
 model file, an entry in `MODEL_PATHS` in `api.py`, and its own check of the text.
 
 ## Notes on labels

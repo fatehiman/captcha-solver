@@ -12,7 +12,7 @@ class CRNN(nn.Module):
     Output: (T, B, NUM_CLASSES)   log-probabilities, ready for CTCLoss.
     """
 
-    def __init__(self, num_classes: int = NUM_CLASSES, rnn_hidden: int = 128):
+    def __init__(self, num_classes: int = NUM_CLASSES, rnn_hidden: int = 128, img_h: int = IMG_H):
         super().__init__()
 
         def block(cin, cout, pool):
@@ -32,7 +32,7 @@ class CRNN(nn.Module):
             *block(128, 128, ((2, 1), (2, 1))),  # H/16 W/4
         )
         # After the conv stack the height is IMG_H/16. Collapse it to 1.
-        self.final_h = IMG_H // 16
+        self.final_h = img_h // 16
         self.head_conv = nn.Conv2d(128, 128, (self.final_h, 1))
 
         self.rnn = nn.LSTM(128, rnn_hidden, num_layers=2,
