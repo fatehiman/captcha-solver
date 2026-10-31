@@ -98,6 +98,33 @@ python evaluate.py --errors   # list every mismatch
 - **Different character set / operators** (e.g. `*`, `/`): extend `CHARSET`
   in `waybill_ocr/config.py` and retrain.
 
+### Type 1 retrained on production samples (2026-10-31, `model.pt`)
+
+The first model (`model_v1.pt`) learned from the 126 images above only. In
+production (auto-waybill, mobile method) the portal rejected ~50% of its answers
+by late October. The waybill app saves every captcha it sends:
+`<dataDir>/captcha-samples/ok/<ms>_<answer>.png` (accepted; the file name is the
+true answer) and `rejected/<ms>_<wrong answer>_4003.png`.
+
+1. Copy those folders to `real/<tenant>/` (asan + zarandi: 4707 accepted).
+2. `python label_real.py` → `labels_real.csv`: the old model's expression is the
+   label when it gives exactly the accepted answer (it did for all 4707).
+3. Hard cases: rejected images labelled by hand — `labels_hard.csv` (46, the
+   **test set**, never trained on) and `labels_hard_train.csv` (68, trained on,
+   repeated 15×). `mkgrid.py` draws a contact sheet for labelling.
+4. `labels_all.csv` = `labels.csv` (as `images/…`) + `labels_real.csv` (as
+   `real/…`); train with `--images .` on that + the hard rows, 100 epochs (~8 min
+   on a GPU).
+
+| model | hard test set (`python eval_hard.py <model>`) | original 126 |
+|---|---|---|
+| `model_v1.pt` | 9/46 (20%) | 126/126 (trained on them) |
+| `model.pt` | **37/46 (80%)** | 121/126 |
+
+Remaining confusions: a doubled first digit read once (`33-3` → `3-3`), `7`↔`2`,
+`3`↔`9`. Label more rejected images to improve further. Only the labelled
+rejected images are in git (see `.gitignore`).
+
 ## CAPTCHA types (`?type=` in the API)
 
 Each CAPTCHA kind has its own model, so adding a kind never changes an older one.
