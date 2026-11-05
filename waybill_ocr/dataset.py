@@ -25,11 +25,38 @@ def load_labels(labels_csv):
     return rows
 
 
+def normalize_big(gray):
+    """The portal's NEW captcha style (since 2026-11-03): a large (600x180 /
+    630x200), clean image with bold dark digits and a lot of white margin.
+    Squeezed straight to 32x128 the digits would be tiny, so crop to the dark
+    ink and scale it onto a 150x50 canvas like the old style. Small (old-style)
+    images are returned unchanged, so this is safe to call on every image."""
+    if gray.shape[1] < 300:
+        return gray
+    ink = gray < 120
+    ys, xs = np.where(ink)
+    if len(xs) < 50:
+        return gray
+    x0, x1 = np.percentile(xs, [0.5, 99.5]).astype(int)
+    y0, y1 = np.percentile(ys, [0.5, 99.5]).astype(int)
+    crop = gray[max(y0 - 2, 0):y1 + 3, max(x0 - 2, 0):x1 + 3]
+    h, w = crop.shape
+    s = min(136 / w, 34 / h)
+    crop = cv2.resize(crop, (max(int(w * s), 1), max(int(h * s), 1)), interpolation=cv2.INTER_AREA)
+    bg = int(np.median(gray))
+    canvas = np.full((50, 150), bg, np.uint8)
+    ch, cw = crop.shape
+    oy, ox = (50 - ch) // 2, (150 - cw) // 2
+    canvas[oy:oy + ch, ox:ox + cw] = crop
+    return canvas
+
+
 def to_input(gray):
     """Resize a grayscale uint8 image to the network input and normalize.
 
     Returns a float32 tensor of shape (1, IMG_H, IMG_W) in [-1, 1].
     """
+    gray = normalize_big(gray)
     resized = cv2.resize(gray, (IMG_W, IMG_H), interpolation=cv2.INTER_AREA)
     x = resized.astype(np.float32) / 255.0
     x = (x - 0.5) / 0.5
@@ -152,7 +179,7 @@ class CaptchaDataset(Dataset):
             g = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
             if g is None:
                 raise FileNotFoundError(path)
-            self._cache[fn] = g
+            self._cache[fn] = normalize_big(g)
         return self._cache[fn]
 
     def __getitem__(self, i):
