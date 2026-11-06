@@ -1,4 +1,4 @@
-# Math-CAPTCHA OCR (auto-waybill-solve)
+# Math-CAPTCHA OCR
 
 OCR for noisy **math CAPTCHA** images of the form `<number><operator><number>`
 — e.g. `48-10`, `3+39`, `0+14`. The images (150×50 JPG) contain italic, bold,
